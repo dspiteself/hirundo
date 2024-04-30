@@ -6,7 +6,8 @@
            (io.helidon.http HttpPrologue)
            (io.helidon.http WritableHeaders)
            (io.helidon.websocket WsListener WsSession WsUpgradeException)
-           (java.util Optional)))
+           (java.util Optional)
+           (java.util.function Supplier)))
 
 (set! *warn-on-reflection* true)
 
@@ -77,11 +78,11 @@
           headers-map)
     (Optional/of wh)))
 
-(defn make-listener
-  ^WsListener [{:as _listener
-                :keys [message ping pong close error open http-upgrade
+(defn make-listener-supplier
+  ^Supplier [{:as     _listener
+                :keys [stateful message ping pong close error open http-upgrade
                        subprotocols extensions]
-                :or {message (constantly nil)
+                :or   {message (constantly nil)
                      ping (constantly nil)
                      pong (constantly nil)
                      close (constantly nil)
@@ -89,30 +90,63 @@
                      open (constantly nil)}}]
   (let [subprotocols (-> subprotocols not-empty set)
         extensions (-> extensions not-empty set)]
-    (reify WsListener
-      (^void onMessage [_ ^WsSession session ^String data ^boolean last]
-        (message session data last))
-      (^void onMessage [_ ^WsSession session ^BufferData data ^boolean last]
-        (message session data last))
-      (^void onPing [_ ^WsSession session ^BufferData data]
-        (ping session data))
-      (^void onPong [_ ^WsSession session ^BufferData data]
-        (pong session data))
-      (^void onClose [_ ^WsSession session ^int status ^String reason]
-        (close session status reason))
-      (^void onError [_ ^WsSession session ^Throwable e]
-        (error session e))
-      (^void onOpen [_ ^WsSession session]
-        (open session))
-      (^Optional onHttpUpgrade [_ ^HttpPrologue http-prologue ^Headers headers]
-        (let [ring-request {:method (r/ring-method http-prologue)
-                            :protocol (r/ring-protocol http-prologue)
-                            :headers (r/ring-headers headers)
-                            ::allowed-subprotocols subprotocols
-                            ::allowed-extensions extensions
-                            ::http-prologue http-prologue
-                            ::headers headers}]
-          (headers-response
-           (if http-upgrade
-             (http-upgrade ring-request)
-             (http-upgrade-default ring-request))))))))
+    (if stateful
+      (reify Supplier
+        (get [_]
+          (let [state (atom nil)]
+            (reify WsListener
+              (^void onMessage [_ ^WsSession session ^String data ^boolean last]
+                (message session state data last))
+              (^void onMessage [_ ^WsSession session ^BufferData data ^boolean last]
+                (message session state data last))
+              (^void onPing [_ ^WsSession session ^BufferData data]
+                (ping session state data))
+              (^void onPong [_ ^WsSession session ^BufferData data]
+                (pong session state data))
+              (^void onClose [_ ^WsSession session ^int status ^String reason]
+                (close session state status reason))
+              (^void onError [_ ^WsSession session ^Throwable e]
+                (error session state e))
+              (^void onOpen [_ ^WsSession session]
+                (open session state))
+              (^Optional onHttpUpgrade [_ ^HttpPrologue http-prologue ^Headers headers]
+                (let [ring-request {:method                (r/ring-method http-prologue)
+                                    :protocol              (r/ring-protocol http-prologue)
+                                    :headers               (r/ring-headers headers)
+                                    ::allowed-subprotocols subprotocols
+                                    ::allowed-extensions   extensions
+                                    ::http-prologue        http-prologue
+                                    ::headers              headers}]
+                  (headers-response
+                    (if http-upgrade
+                      (http-upgrade ring-request state)
+                      (http-upgrade-default ring-request)))))))))
+      (reify Supplier
+        (get [_]
+          (reify WsListener
+            (^void onMessage [_ ^WsSession session ^String data ^boolean last]
+              (message session data last))
+            (^void onMessage [_ ^WsSession session ^BufferData data ^boolean last]
+              (message session data last))
+            (^void onPing [_ ^WsSession session ^BufferData data]
+              (ping session data))
+            (^void onPong [_ ^WsSession session ^BufferData data]
+              (pong session data))
+            (^void onClose [_ ^WsSession session ^int status ^String reason]
+              (close session status reason))
+            (^void onError [_ ^WsSession session ^Throwable e]
+              (error session e))
+            (^void onOpen [_ ^WsSession session]
+              (open session))
+            (^Optional onHttpUpgrade [_ ^HttpPrologue http-prologue ^Headers headers]
+              (let [ring-request {:method                (r/ring-method http-prologue)
+                                  :protocol              (r/ring-protocol http-prologue)
+                                  :headers               (r/ring-headers headers)
+                                  ::allowed-subprotocols subprotocols
+                                  ::allowed-extensions   extensions
+                                  ::http-prologue        http-prologue
+                                  ::headers              headers}]
+                (headers-response
+                  (if http-upgrade
+                    (http-upgrade ring-request)
+                    (http-upgrade-default ring-request)))))))))))

@@ -5,6 +5,7 @@
            (io.helidon.http PathMatchers)
            (io.helidon.webserver WebServerConfig$Builder Routing Route)
            (io.helidon.webserver.websocket WsRouting WsRoute WsRouting$Builder)
+           (io.helidon.websocket WsListener)
            (java.util.function Supplier)))
 
 (set! *warn-on-reflection* true)
@@ -16,9 +17,7 @@
      ^WsRouting$Builder
      (reduce (fn [^WsRouting$Builder builder [path listener]]
                (.endpoint builder ^String path
-                          (reify Supplier
-                            (get [_]
-                              (l/make-listener listener)))))
+                          (l/make-listener-supplier listener)))
              (WsRouting/builder)
              endpoints))))
 
